@@ -1,14 +1,27 @@
 ﻿using UnityEngine;
-using UnityEngine.InputSystem; // ✅ Required for new Input System
+using UnityEngine.InputSystem; // Required for the new Input System
 
+/// <summary>
+/// Handles player melee attack logic, using a radius-based hit detection.
+/// </summary>
+[RequireComponent(typeof(PlayerBehaviorTracker))]
 public class PlayerAttack : MonoBehaviour
 {
+    [Header("Attack Settings")]
     public float attackRange = 2f;
     public float attackDamage = 20f;
 
-    void Update()
+    private PlayerBehaviorTracker tracker;
+
+    private void Awake()
     {
-        // ✅ Using the new Input System directly
+        // Cache component reference
+        tracker = GetComponent<PlayerBehaviorTracker>();
+    }
+
+    private void Update()
+    {
+        // Trigger attack using the new Input System
         if (Keyboard.current.spaceKey.wasPressedThisFrame)
         {
             Debug.Log("Attack triggered");
@@ -16,11 +29,16 @@ public class PlayerAttack : MonoBehaviour
         }
     }
 
-    void Attack()
+    /// <summary>
+    /// Performs a melee attack, damaging nearby enemies.
+    /// </summary>
+    private void Attack()
     {
-        // ✅ Check for enemies within attack range
+        // Get all colliders within the attack range
         Collider[] hitEnemies = Physics.OverlapSphere(transform.position, attackRange);
-        Debug.Log("Enemies in range: " + hitEnemies.Length);
+        Debug.Log($"Enemies in range: {hitEnemies.Length}");
+
+        int enemiesHit = 0;
 
         foreach (Collider enemy in hitEnemies)
         {
@@ -28,21 +46,21 @@ public class PlayerAttack : MonoBehaviour
             if (fsm != null)
             {
                 fsm.TakeDamage(attackDamage);
-                Debug.Log("Hit enemy for " + attackDamage + " damage!");
+                enemiesHit++;
+                Debug.Log($"Hit {enemy.name} for {attackDamage} damage.");
             }
         }
 
-        // ✅ Inform tracker that an attack happened
-        var tracker = GetComponent<PlayerBehaviorTracker>();
-        if (tracker != null)
+        // Log the attack event for tracking/player analytics
+        if (enemiesHit > 0 && tracker != null)
         {
             tracker.IncrementAttack();
         }
     }
 
-    void OnDrawGizmosSelected()
+    private void OnDrawGizmosSelected()
     {
-        // ✅ Visualize attack range in the editor
+        // Draw attack range in editor when selected
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, attackRange);
     }
