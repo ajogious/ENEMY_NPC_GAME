@@ -31,6 +31,13 @@ public class PlayerAttack : MonoBehaviour
                 Debug.Log("Hit enemy for " + attackDamage + " damage!");
             }
         }
+
+        // ✅ Inform tracker that an attack happened
+        var tracker = GetComponent<PlayerBehaviorTracker>();
+        if (tracker != null)
+        {
+            tracker.IncrementAttack();
+        }
     }
 
     void OnDrawGizmosSelected()

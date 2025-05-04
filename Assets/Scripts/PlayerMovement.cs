@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(CharacterController))]
@@ -27,3 +27,4 @@ public class PlayerMovement : MonoBehaviour
     private void OnEnable() => controls.Enable();
     private void OnDisable() => controls.Disable();
 }
+
