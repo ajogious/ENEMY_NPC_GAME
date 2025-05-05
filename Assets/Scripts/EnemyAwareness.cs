@@ -10,6 +10,10 @@ public class EnemyAwareness : MonoBehaviour
     public TextMeshProUGUI stateText;
     public EnemyFOV fov;
 
+    [Header("References")]
+    public EnemyFSM enemyFSM;  // Drag this in Inspector or assign in Start()
+
+
     [Header("Timings (seconds)")]
     [SerializeField] private float suspiciousTime = 1.5f;
     [SerializeField] private float alertedTime = 3f;

@@ -1,14 +1,13 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.AI;
 
 /// <summary>
 /// Controls enemy behavior using a Finite State Machine (FSM).
-/// Handles patrolling, chasing, attacking, retreating, and searching.
-/// Adapts to player behavior over time.
+/// Includes adaptation using Genetic Algorithm via EnemyDNA.
 /// </summary>
 public class EnemyFSM : MonoBehaviour
 {
-    public enum EnemyState { Patrolling, Chasing, Attacking, Retreating, Searching }
+    public enum EnemyState { Patrolling, Chasing, Attacking, Retreating, Searching, Healing }
     public EnemyState currentState = EnemyState.Patrolling;
 
     [Header("Navigation")]
@@ -20,9 +19,9 @@ public class EnemyFSM : MonoBehaviour
     public Transform player;
 
     [Header("Combat Parameters")]
-    public float attackRange = 2f;
-    public float chaseRange = 10f;
-    public float retreatThreshold = 15f;
+    public float defaultAttackRange = 2f;
+    public float defaultChaseRange = 10f;
+    public float defaultRetreatThreshold = 15f;
     public float lowHealth = 30f;
 
     [Header("Health")]
@@ -35,7 +34,7 @@ public class EnemyFSM : MonoBehaviour
     public float searchDuration = 5f;
     private Vector3 lastKnownPlayerPosition;
 
-    [Header("Adaptive Behavior")]
+    [Header("Adaptive Behavior (optional scoring)")]
     private float aggressiveScore = 0f;
     private float stealthScore = 0f;
     public float scoreDecayRate = 1f;
@@ -43,10 +42,19 @@ public class EnemyFSM : MonoBehaviour
     [Header("Dependencies")]
     public EnemyFOV fov;
 
+    private EnemyGAController gaController;
+    private EnemyDNA dna;
+    private float lastAttackTime = 0f;
+
+    private bool isRetreatingComplete = false;
+
     private void Start()
     {
         agent = GetComponent<NavMeshAgent>();
         GoToNextPatrolPoint();
+
+        gaController = GetComponent<EnemyGAController>();
+        dna = gaController?.GetCurrentDNA();
     }
 
     private void Update()
@@ -54,34 +62,43 @@ public class EnemyFSM : MonoBehaviour
         if (player == null || agent == null || fov == null)
             return;
 
+        dna = gaController?.GetCurrentDNA();
+
+        float chaseRange = dna != null ? dna.chaseRange : defaultChaseRange;
+        float retreatThreshold = dna != null ? dna.chaseRange : defaultRetreatThreshold;
         float distanceToPlayer = Vector3.Distance(transform.position, player.position);
+
         UpdateBehaviorScores();
+
+        if ((currentState == EnemyState.Patrolling || currentState == EnemyState.Searching) && fov.canSeePlayer)
+        {
+            TransitionToState(EnemyState.Chasing);
+        }
 
         switch (currentState)
         {
             case EnemyState.Patrolling:
-                HandlePatrolling(distanceToPlayer);
+                HandlePatrolling(distanceToPlayer, chaseRange);
                 break;
-
             case EnemyState.Chasing:
                 HandleChasing(distanceToPlayer);
                 break;
-
             case EnemyState.Attacking:
                 HandleAttacking(distanceToPlayer);
                 break;
-
             case EnemyState.Retreating:
-                HandleRetreating(distanceToPlayer);
+                HandleRetreating(distanceToPlayer, retreatThreshold);
                 break;
-
             case EnemyState.Searching:
                 HandleSearching();
+                break;
+            case EnemyState.Healing:
+                HandleHealing();
                 break;
         }
     }
 
-    private void HandlePatrolling(float distance)
+    private void HandlePatrolling(float distance, float chaseRange)
     {
         if (!agent.pathPending && agent.remainingDistance < 0.5f)
             GoToNextPatrolPoint();
@@ -94,7 +111,7 @@ public class EnemyFSM : MonoBehaviour
     {
         agent.destination = player.position;
 
-        if (distance < attackRange)
+        if (distance < defaultAttackRange)
             TransitionToState(EnemyState.Attacking);
         else if (!fov.canSeePlayer)
         {
@@ -107,29 +124,74 @@ public class EnemyFSM : MonoBehaviour
     {
         agent.ResetPath();
         transform.LookAt(player);
-        Debug.Log("Enemy is attacking!");
 
-        if (distance > attackRange)
+        float aggression = dna != null ? dna.aggression : 0.5f;
+        float attackCooldown = Mathf.Lerp(2f, 0.5f, aggression);
+
+        if (Time.time - lastAttackTime >= attackCooldown)
+        {
+            Debug.Log($"Enemy attacks with aggression: {aggression} (cooldown: {attackCooldown}s)");
+            lastAttackTime = Time.time;
+            // Add attack logic here (e.g., damage)
+        }
+
+        if (distance > defaultAttackRange)
             TransitionToState(EnemyState.Chasing);
-        else if (health < lowHealth)
+        else if (health < lowHealth && currentState != EnemyState.Retreating)
             TransitionToState(EnemyState.Retreating);
     }
 
-    private void HandleRetreating(float distance)
+    private void HandleRetreating(float distance, float retreatThreshold)
     {
+        transform.LookAt(player);
+
         Vector3 dir = (transform.position - player.position).normalized;
-        agent.destination = transform.position + dir * 5f;
+        Vector3 retreatPoint = transform.position + dir * 10f;
+
+        if (!agent.hasPath)
+        {
+            if (NavMesh.SamplePosition(retreatPoint, out NavMeshHit hit, 10f, NavMesh.AllAreas))
+            {
+                agent.destination = hit.position;
+            }
+        }
+
         Debug.Log("Enemy is retreating!");
 
-        if (distance > retreatThreshold)
+        if (!isRetreatingComplete && distance > retreatThreshold)
         {
-            health = Mathf.Min(health + 10f, 100f); // Passive regen on retreat
-            TransitionToState(EnemyState.Patrolling);
+            TransitionToState(EnemyState.Healing);
+        }
+    }
+
+    private void HandleHealing()
+    {
+        agent.ResetPath();  // Prevent movement
+        Debug.Log("Enemy Healing...");
+
+        // Heal over time
+        health = Mathf.Min(health + Time.deltaTime * 10f, 100f);
+
+        if (health >= 100f)
+        {
+            Debug.Log("Healing complete. Enemy will resume behavior.");
+
+            if (gaController != null)
+            {
+                gaController.AdaptToPlayer();
+                dna = gaController.GetCurrentDNA();
+                Debug.Log("Enemy evolved new DNA after healing.");
+            }
+
+            isRetreatingComplete = true;
+            searchTimer = 0f;
+            TransitionToState(EnemyState.Searching);
         }
     }
 
     private void HandleSearching()
     {
+        transform.LookAt(player);
         agent.destination = lastKnownPlayerPosition;
         searchTimer += Time.deltaTime;
 
@@ -142,13 +204,23 @@ public class EnemyFSM : MonoBehaviour
         }
 
         if (fov.canSeePlayer)
+        {
+            searchTimer = 0f;
             TransitionToState(EnemyState.Chasing);
+        }
     }
 
     private void TransitionToState(EnemyState newState)
     {
-        currentState = newState;
         Debug.Log("Transitioning to: " + newState);
+
+        currentState = newState;
+        agent.ResetPath();
+
+        if (newState == EnemyState.Retreating)
+        {
+            isRetreatingComplete = false;
+        }
     }
 
     private void GoToNextPatrolPoint()
@@ -167,10 +239,13 @@ public class EnemyFSM : MonoBehaviour
         health = Mathf.Max(health - amount, 0f);
 
         aggressiveScore += 10f;
+
         Debug.Log($"Enemy took {amount} damage. Health: {health}");
 
         if (health < lowHealth && currentState != EnemyState.Retreating)
+        {
             TransitionToState(EnemyState.Retreating);
+        }
     }
 
     private void UpdateBehaviorScores()
@@ -178,21 +253,18 @@ public class EnemyFSM : MonoBehaviour
         if (fov.canSeePlayer)
             stealthScore += Time.deltaTime * 2f;
 
-        // Decay over time
         aggressiveScore = Mathf.Max(0f, aggressiveScore - Time.deltaTime * scoreDecayRate);
         stealthScore = Mathf.Max(0f, stealthScore - Time.deltaTime * scoreDecayRate);
 
-        // Adaptive tweaks
         if (stealthScore > 15f)
         {
-            chaseRange = 15f;
-            Debug.Log("Adapting to stealthy player: increased chase range.");
+            Debug.Log("Player is stealthy. Enemy considering wider chase range.");
         }
 
         if (aggressiveScore > 20f)
-        {
-            retreatThreshold = 10f;
-            Debug.Log("Adapting to aggressive player: lowered retreat threshold.");
+        {   
+            Debug.Log("Player is aggressive. Enemy may evolve faster.");
         }
     }
+
 }
